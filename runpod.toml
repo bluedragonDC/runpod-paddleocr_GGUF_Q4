@@ -1,20 +1,23 @@
 [project]
 name = "PaddleOCR_GGUF"
-base_image = "python:3.11-slim"
+base_image = "nvidia/cuda:12.1.1-devel-ubuntu22.04"
 env = [
   { name = "DEBIAN_FRONTEND", value = "noninteractive" },
   { name = "OCR_CACHE_DIR", value = "/app/models" },
-  { name = "LLAMA_SERVER", value = "/app/llama.cpp/llama-server" }
+  { name = "LLAMA_SERVER", value = "/app/llama.cpp/llama-server" },
+  { name = "CUDA_DOCKER_ARCH", value = "all" },
+  { name = "GGML_CUDA", value = "1" }
 ]
 
 [project.setup]
 commands = [
-  "apt-get update && apt-get install -y --no-install-recommends wget curl unzip git build-essential cmake libgl1 libglib2.0-0",
+  "apt-get update && apt-get install -y --no-install-recommends wget curl unzip git build-essential cmake python3.11 python3.11-venv python3-pip libgl1 libglib2.0-0",
+  "ln -sf /usr/bin/python3.11 /usr/bin/python3",
   "mkdir -p /app/models",
   "git clone https://github.com/ggerganov/llama.cpp.git /app/llama.cpp",
-  "cd /app/llama.cpp && make GGML_CUDA=1 LLAMA_SERVER=1",
-  "pip install --no-cache-dir runpod huggingface-hub",
-  "pip install --no-cache-dir -r requirements.txt",
+  "cd /app/llama.cpp && cmake -B build -DGGML_CUDA=ON && cmake --build build --config Release -j 8",
+  "cp /app/llama.cpp/build/bin/llama-server /app/llama.cpp/",
+  "pip install --no-cache-dir runpod huggingface-hub pymupdf requests",
   "python3 -c \"from huggingface_hub import hf_hub_download; hf_hub_download('mradermacher/PaddleOCR-VL-1.6-GGUF', 'PaddleOCR-VL-1.6.Q4_K_M.gguf', local_dir='/app/models'); hf_hub_download('PaddlePaddle/PaddleOCR-VL-1.6-GGUF', 'PaddleOCR-VL-1.6-GGUF-mmproj.gguf', local_dir='/app/models');\""
 ]
 
