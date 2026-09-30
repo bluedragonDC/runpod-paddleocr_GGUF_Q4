@@ -9,11 +9,10 @@ env = [
 
 [project.setup]
 commands = [
-  "apt-get update && apt-get install -y --no-install-recommends wget curl unzip libgl1 libglib2.0-0",
-  "mkdir -p /app/models /app/llama.cpp",
-  "wget -q -O /tmp/llama.zip https://github.com/ggerganov/llama.cpp/releases/download/b3821/llama-b3821-bin-ubuntu-x64.zip",
-  "unzip -j /tmp/llama.zip -d /app/llama.cpp/",
-  "chmod +x /app/llama.cpp/llama-server",
+  "apt-get update && apt-get install -y --no-install-recommends wget curl unzip git build-essential cmake libgl1 libglib2.0-0",
+  "mkdir -p /app/models",
+  "git clone https://github.com/ggerganov/llama.cpp.git /app/llama.cpp",
+  "cd /app/llama.cpp && make GGML_CUDA=1 LLAMA_SERVER=1",
   "pip install --no-cache-dir runpod huggingface-hub",
   "pip install --no-cache-dir -r requirements.txt",
   "python3 -c \"from huggingface_hub import hf_hub_download; hf_hub_download('mradermacher/PaddleOCR-VL-1.6-GGUF', 'PaddleOCR-VL-1.6.Q4_K_M.gguf', local_dir='/app/models'); hf_hub_download('PaddlePaddle/PaddleOCR-VL-1.6-GGUF', 'PaddleOCR-VL-1.6-GGUF-mmproj.gguf', local_dir='/app/models');\""
