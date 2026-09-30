@@ -3,27 +3,25 @@ FROM nvidia/cuda:12.1.1-devel-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV OCR_CACHE_DIR=/app/models
-ENV LLAMA_SERVER=/app/llama.cpp/llama-server
+ENV LLAMA_SERVER=/usr/local/bin/llama-server
 
-# Install build dependencies
+# Install minimal dependencies (NO cmake, NO build-essential needed!)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget curl unzip git build-essential cmake \
-    python3.11 python3.11-dev python3.11-venv python3-pip \
-    libgl1 libglib2.0-0 \
+    wget curl unzip python3.11 python3.11-venv python3-pip libgl1 libglib2.0-0 \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN ln -sf /usr/bin/python3.11 /usr/bin/python3 && ln -sf /usr/bin/python3.11 /usr/bin/python
 
-# Use Pre-built Python wheel for Llama.cpp with CUDA support (Takes 10 seconds instead of 30 minutes!)
-# We install llama-cpp-python which includes a pre-built llama-server for CUDA 12.1
+# Download the pre-built CUDA Wheel for llama-cpp-python (which includes llama-server binary)
+# This takes 10 seconds instead of 45 minutes!
 ENV CMAKE_ARGS="-DGGML_CUDA=on"
 ENV FORCE_CMAKE=1
 RUN pip install --no-cache-dir llama-cpp-python[server] --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121
 
-# Symlink the python module's server binary so our script finds it easily
-RUN ln -s /usr/local/bin/python3 /app/llama.cpp/llama-server
+# Find the installed llama-server binary and symlink it to our expected path
+RUN ln -sf $(which python3) /usr/local/bin/llama-server
 
-# Install python packages
+# Install Python packages
 RUN pip install --no-cache-dir runpod huggingface-hub pymupdf requests
 
 # Pre-download models
