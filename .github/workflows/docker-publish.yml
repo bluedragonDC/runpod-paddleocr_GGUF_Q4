@@ -38,5 +38,3 @@ jobs:
           context: .
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/runpod-paddleocr-gguf:latest
-          cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/runpod-paddleocr-gguf:buildcache
-          cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/runpod-paddleocr-gguf:buildcache,mode=max
