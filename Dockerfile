@@ -44,4 +44,4 @@ WORKDIR /app
 COPY . /app
 
 # Run the handler
-CMD ["python3", "-u", "runpod_handler.py"]
+CMD ["python3", "-u", "handler.py"]

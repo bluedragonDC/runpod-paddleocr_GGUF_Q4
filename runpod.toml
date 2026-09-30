@@ -20,4 +20,4 @@ commands = [
 ]
 
 [serverless]
-handler = "runpod_handler.py"
+handler = "handler.py"
