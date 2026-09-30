@@ -1,0 +1,5 @@
+pymupdf
+paddleocr==3.7.0
+paddlex[ocr]==3.7.2
+paddlepaddle-gpu
+runpod
