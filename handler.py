@@ -9,19 +9,33 @@ import runpod
 
 logging.basicConfig(level=logging.INFO)
 
-pipeline = None
-try:
-    from ocr_pipeline import get_pipeline
-    pipeline = get_pipeline()
-    logging.info("OcrPipeline initialized successfully.")
-except Exception as e:
-    logging.error(f"Failed to initialize OcrPipeline: {e}\n{traceback.format_exc()}")
+_pipeline = None
+
+
+def _get_active_pipeline(job: dict[str, Any]):
+    global _pipeline
+    if _pipeline is None:
+        try:
+            runpod.serverless.progress_update(
+                job, "🧊 Soğuk Başlangıç: GPU Modelleri VRAM'e Yükleniyor..."
+            )
+        except Exception:
+            pass
+
+        from ocr_pipeline import get_pipeline
+
+        _pipeline = get_pipeline()
+        logging.info("OcrPipeline initialized successfully.")
+    return _pipeline
+
 
 def process_job(job: dict[str, Any]) -> dict[str, Any]:
-    if pipeline is None:
-        return {
-            "error": "OcrPipeline failed to initialize on worker startup. Check server logs for details."
-        }
+    try:
+        pipeline = _get_active_pipeline(job)
+    except Exception as e:
+        err_msg = f"Failed to initialize OcrPipeline: {e}\n{traceback.format_exc()}"
+        logging.error(err_msg)
+        return {"error": err_msg}
 
     job_input = job.get("input", {})
 
@@ -34,20 +48,26 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
     pages = job_input.get("pages", None)
 
     try:
+        try:
+            runpod.serverless.progress_update(
+                job, "⚡ RunPod GPU: PaddleOCR-VL Çıkarımı Yapılıyor..."
+            )
+        except Exception:
+            pass
+
         if pdf_base64:
             pdf_bytes = base64.b64decode(pdf_base64, validate=True)
             result = pipeline.convert(pdf_bytes, pages)
             return result
 
         if image_base64:
-            # If the user passes 'data:image/jpeg;base64,...', strip the prefix
             if isinstance(image_base64, str) and image_base64.startswith("data:image/"):
                 image_base64 = image_base64.split(",", 1)[1]
 
             img_bytes = base64.b64decode(image_base64, validate=True)
 
-            # Convert JPEG bytes to PDF stream via pymupdf
             import pymupdf
+
             doc = pymupdf.open()
             img_doc = pymupdf.open("pdf", pymupdf.open("jpeg", img_bytes).convert_to_pdf())
             doc.insert_pdf(img_doc)
@@ -62,8 +82,6 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
         logging.error(f"Job failed: {str(e)}\n{traceback.format_exc()}")
         return {"error": str(e)}
 
+
 if __name__ == "__main__":
-    if pipeline is not None:
-        runpod.serverless.start({"handler": process_job})
-    else:
-        logging.error("Container failing to start because pipeline is null.")
+    runpod.serverless.start({"handler": process_job})
