@@ -1,21 +1,28 @@
 import base64
 import json
 import logging
+import traceback
 from pathlib import Path
 from typing import Any
 
 import runpod
 
-# Initialize the pipeline once when the container starts
+logging.basicConfig(level=logging.INFO)
+
+pipeline = None
 try:
     from ocr_pipeline import get_pipeline
     pipeline = get_pipeline()
     logging.info("OcrPipeline initialized successfully.")
 except Exception as e:
-    logging.error(f"Failed to initialize OcrPipeline: {e}")
-    pipeline = None
+    logging.error(f"Failed to initialize OcrPipeline: {e}\n{traceback.format_exc()}")
 
 def process_job(job: dict[str, Any]) -> dict[str, Any]:
+    if pipeline is None:
+        return {
+            "error": "OcrPipeline failed to initialize on worker startup. Check server logs for details."
+        }
+
     job_input = job.get("input", {})
 
     pdf_base64 = job_input.get("pdf_base64")
@@ -39,9 +46,7 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
 
             img_bytes = base64.b64decode(image_base64, validate=True)
 
-            # Since pipeline expects PDF bytes by default, we need to wrap the image in a PDF
-            # A cleaner approach is calling the predictor directly for a single image
-            # But to keep it exactly identical to the local logic, we create a temporary PDF:
+            # Convert JPEG bytes to PDF stream via pymupdf
             import pymupdf
             doc = pymupdf.open()
             img_doc = pymupdf.open("pdf", pymupdf.open("jpeg", img_bytes).convert_to_pdf())
@@ -54,7 +59,7 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
             return result
 
     except Exception as e:
-        logging.error(f"Job failed: {str(e)}")
+        logging.error(f"Job failed: {str(e)}\n{traceback.format_exc()}")
         return {"error": str(e)}
 
 if __name__ == "__main__":

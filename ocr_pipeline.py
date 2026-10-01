@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import tempfile
 import time
@@ -13,10 +14,32 @@ from pathlib import Path
 import pymupdf
 
 
+def _find_llama_server() -> str:
+    env_path = os.environ.get("LLAMA_SERVER")
+    if env_path and Path(env_path).is_file():
+        return env_path
+
+    found = shutil.which("llama-server")
+    if found and Path(found).is_file():
+        return found
+
+    candidates = [
+        "/usr/local/bin/llama-server",
+        "/usr/bin/llama-server",
+        "/app/llama.cpp/llama-server",
+        "/app/llama.cpp/build/bin/llama-server",
+        "/runpod-volume/llama.cpp/llama-server",
+    ]
+    for cand in candidates:
+        if Path(cand).is_file():
+            return cand
+    return env_path or "/usr/local/bin/llama-server"
+
+
 CACHE_DIR = Path(os.environ.get("OCR_CACHE_DIR", "/runpod-volume/ocr-cache"))
 MODEL = Path(os.environ.get("OCR_MODEL_PATH", str(CACHE_DIR / "PaddleOCR-VL-1.6.Q4_K_M.gguf")))
 PROJECTOR = Path(os.environ.get("OCR_PROJECTOR_PATH", str(CACHE_DIR / "PaddleOCR-VL-1.6-GGUF-mmproj.gguf")))
-LLAMA_SERVER = os.environ.get("LLAMA_SERVER", "/runpod-volume/llama.cpp/llama-server")
+LLAMA_SERVER = _find_llama_server()
 LLAMA_URL = os.environ.get("LLAMA_URL", "http://127.0.0.1:8112")
 MAX_PDF_BYTES = int(os.environ.get("MAX_PDF_BYTES", str(8 * 1024 * 1024)))
 MAX_PAGES = int(os.environ.get("HARD_MAX_PAGES", "30"))
@@ -45,18 +68,36 @@ class OcrPipeline:
         server_path = Path(LLAMA_SERVER)
         if not MODEL.is_file() or not PROJECTOR.is_file() or not server_path.is_file():
             raise RuntimeError(
-                "Missing Q4 model, projector or llama-server. Keep the two GGUF files in OCR_CACHE_DIR "
-                "and put a CUDA-enabled llama-server at LLAMA_SERVER on the attached Runpod network volume."
+                f"Missing files - model: {MODEL.is_file()} ({MODEL}), "
+                f"projector: {PROJECTOR.is_file()} ({PROJECTOR}), "
+                f"llama-server: {server_path.is_file()} ({LLAMA_SERVER})"
             )
+
         os.environ["LD_LIBRARY_PATH"] = os.pathsep.join(
             [str(server_path.parent), os.environ.get("LD_LIBRARY_PATH", "")]
         )
         self.server_log = open("/tmp/llama-server.log", "ab", buffering=0)
         self.server = subprocess.Popen(
-            [LLAMA_SERVER, "--model", str(MODEL), "--mmproj", str(PROJECTOR),
-             "--host", "127.0.0.1", "--port", "8112", "--ctx-size", "8192",
-             "--parallel", "1", "--n-gpu-layers", "99"],
-            env=os.environ.copy(), stdout=self.server_log, stderr=subprocess.STDOUT,
+            [
+                str(server_path),
+                "--model",
+                str(MODEL),
+                "--mmproj",
+                str(PROJECTOR),
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "8112",
+                "--ctx-size",
+                "8192",
+                "--parallel",
+                "1",
+                "--n-gpu-layers",
+                "99",
+            ],
+            env=os.environ.copy(),
+            stdout=self.server_log,
+            stderr=subprocess.STDOUT,
         )
         self._wait_ready()
         from paddleocr import PaddleOCRVL
@@ -72,7 +113,15 @@ class OcrPipeline:
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             if self.server.poll() is not None:
-                raise RuntimeError("llama-server stopped during startup; inspect worker logs")
+                log_content = ""
+                try:
+                    if Path("/tmp/llama-server.log").exists():
+                        log_content = Path("/tmp/llama-server.log").read_text(encoding="utf-8")
+                except Exception:
+                    pass
+                raise RuntimeError(
+                    f"llama-server stopped during startup. Exit code: {self.server.poll()}. Log: {log_content[-500:]}"
+                )
             try:
                 with urllib.request.urlopen(f"{LLAMA_URL}/health", timeout=2) as response:
                     if response.status == 200:
@@ -97,7 +146,10 @@ class OcrPipeline:
             pages = requested_pages or list(range(1, page_count + 1))
             if not isinstance(pages, list) or not pages or len(pages) > MAX_PAGES:
                 raise ValueError(f"Select between 1 and {MAX_PAGES} pages")
-            if any(isinstance(page, bool) or not isinstance(page, int) or not 1 <= page <= page_count for page in pages):
+            if any(
+                isinstance(page, bool) or not isinstance(page, int) or not 1 <= page <= page_count
+                for page in pages
+            ):
                 raise ValueError(f"Every page number must be between 1 and {page_count}")
             if len(set(pages)) != len(pages):
                 raise ValueError("pages cannot contain duplicates")
@@ -106,7 +158,9 @@ class OcrPipeline:
             total_words = 0
             for page_number in pages:
                 page = document[page_number - 1]
-                pixmap = page.get_pixmap(matrix=pymupdf.Matrix(RENDER_SCALE, RENDER_SCALE), alpha=False)
+                pixmap = page.get_pixmap(
+                    matrix=pymupdf.Matrix(RENDER_SCALE, RENDER_SCALE), alpha=False
+                )
                 with tempfile.TemporaryDirectory(prefix="ocr-") as temp_dir:
                     image_path = Path(temp_dir) / f"page-{page_number}.png"
                     output_dir = Path(temp_dir) / "markdown"
@@ -115,10 +169,16 @@ class OcrPipeline:
                     result_files = []
                     for result in results:
                         result.save_to_markdown(save_path=str(output_dir))
-                    result_files = list(output_dir.glob("*.md")) if output_dir.exists() else []
+                    result_files = (
+                        list(output_dir.glob("*.md")) if output_dir.exists() else []
+                    )
                     if not result_files:
                         raise RuntimeError(f"OCR produced no Markdown for page {page_number}")
-                    content = max(result_files, key=lambda path: path.stat().st_mtime).read_text(encoding="utf-8").strip()
+                    content = (
+                        max(result_files, key=lambda path: path.stat().st_mtime)
+                        .read_text(encoding="utf-8")
+                        .strip()
+                    )
                 total_words += len(content.split())
                 markdown_parts.append(f"<!-- Page {page_number} -->\n\n{content}")
 
